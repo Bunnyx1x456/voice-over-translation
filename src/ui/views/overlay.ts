@@ -1,4 +1,9 @@
-import { availableLangs, availableTTS } from "@vot.js/shared/consts";
+const expandedLangs = [
+  "auto", "ar", "zh", "fr", "de", "hi", "it", "ja", "ko", "pt", "es", "uk",
+  "ru", "en", "be", "bg", "ca", "cs", "da", "el", "fi", "he", "hr", "hu",
+  "id", "lt", "lv", "mk", "nl", "no", "pl", "ro", "sk", "sl", "sq", "sr",
+  "sv", "th", "tr", "vi", "az", "hy", "kk", "ky", "tg", "uz"
+];
 import type { RequestLang, ResponseLang } from "@vot.js/shared/types/data";
 import type { VideoHandler } from "../..";
 import { maxAudioVolume } from "../../config/config";
@@ -367,11 +372,11 @@ export class OverlayView {
     this.languagePairSelect = new LanguagePairSelect({
       from: {
         selectTitle: localizationProvider.get(`langs.${detectedLanguage}`),
-        items: Select.genLanguageItems(availableLangs, detectedLanguage),
+        items: Select.genLanguageItems(expandedLangs, detectedLanguage),
       },
       to: {
         selectTitle: localizationProvider.get(`langs.${responseLanguage}`),
-        items: Select.genLanguageItems(availableTTS, responseLanguage),
+        items: Select.genLanguageItems(expandedLangs.filter(l => l !== 'auto'), responseLanguage),
       },
     });
 

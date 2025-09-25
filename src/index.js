@@ -1,8 +1,7 @@
 import VOTClient, { VOTWorkerClient } from "@vot.js/ext";
 import YoutubeHelper from "@vot.js/ext/helpers/youtube";
 import { getService, getVideoID } from "@vot.js/ext/utils/videoData";
-import Chaimu, { initAudioContext } from "chaimu";
-import { initAudioDownloaderIframe } from "./audioDownloader/iframe.ts";
+import { initAudioContext } from "chaimu";
 import {
   actualCompatVersion,
   authServerUrl,
@@ -65,16 +64,11 @@ class VideoHandler {
   hls;
   /** @type {VOTClient|VOTWorkerClient} */
   votClient;
-  /** @type {Chaimu} */
-  audioPlayer;
   /** @type {AbortController|undefined} */
   abortController;
   /** @type {AbortController|undefined} */
   actionsAbortController;
   cacheManager; // cache for translation and subtitles
-  downloadTranslationUrl = null;
-  autoRetry; // auto retry timeout
-  streamPing; // stream ping interval
   votOpts;
   volumeOnStart;
   tempOriginalVolume; // temp video volume for syncing
@@ -164,36 +158,6 @@ class VideoHandler {
     }
   }
 
-  /**
-   * Determines if audio should be preferred.
-   * @returns {boolean} True if audio is preferred.
-   */
-  getPreferAudio() {
-    if (!this.audioContext) return true;
-    if (!this.data.newAudioPlayer) return true;
-    if (this.videoData.isStream) return true; // Use old player for streams with HLS
-    if (this.data.newAudioPlayer && !this.data.onlyBypassMediaCSP) return false;
-    return !this.site.needBypassCSP;
-  }
-
-  /**
-   * Creates the audio player.
-   * @returns {VideoHandler} The VideoHandler instance.
-   */
-  createPlayer() {
-    const preferAudio = this.getPreferAudio();
-    debug.log("preferAudio:", preferAudio);
-    this.audioPlayer = new Chaimu({
-      video: this.video,
-      debug: DEBUG_MODE,
-      fetchFn: GM_fetch,
-      fetchOpts: {
-        timeout: 0,
-      },
-      preferAudio,
-    });
-    return this;
-  }
 
   /**
    * Initializes the VideoHandler: loads settings, UI, video data, events, etc.
@@ -299,14 +263,11 @@ class VideoHandler {
     this.subtitlesWidget.setFontSize(this.data.subtitlesFontSize);
     this.subtitlesWidget.setOpacity(this.data.subtitlesOpacity);
 
-    // Get video data and create player.
-    this.createPlayer();
+    // Get video data
     this.setSelectMenuValues(
       this.videoData.detectedLanguage,
       this.data.responseLanguage ?? "ru",
     );
-
-    this.translateToLang = this.data.responseLanguage ?? "ru";
     this.initExtraEvents();
 
     await this.autoTranslate();
@@ -347,12 +308,6 @@ class VideoHandler {
     return this;
   }
 
-  /**
-   * @returns {boolean} True if the extension audio player has active audio source
-   */
-  hasActiveSource() {
-    return !!(this.audioPlayer.player.src || this.hls?.url);
-  }
 
   /**
    * Initializes extra event listeners (resize, click outside, keydown, etc.).
@@ -389,40 +344,6 @@ class VideoHandler {
       `${this.video.getBoundingClientRect().height}px`,
     );
 
-    // Sync volume slider with original YouTube video.
-    if (
-      ["youtube", "googledrive"].includes(this.site.host) &&
-      this.site.additionalData !== "mobile"
-    ) {
-      this.syncVolumeObserver = new MutationObserver((mutations) => {
-        if (!this.audioPlayer.player.src || !this.data.syncVolume) return;
-        for (const mutation of mutations) {
-          if (
-            mutation.type === "attributes" &&
-            mutation.attributeName === "aria-valuenow"
-          ) {
-            if (this.firstSyncVolume) {
-              this.firstSyncVolume = false;
-              return;
-            }
-            const videoVolume = this.isMuted()
-              ? 0
-              : this.getVideoVolume() * 100;
-            const finalVolume = Math.round(videoVolume);
-            this.data.defaultVolume = finalVolume;
-            this.audioPlayer.player.volume = this.data.defaultVolume / 100;
-            this.syncVolumeWrapper("video", finalVolume);
-          }
-        }
-      });
-      const ytpVolumePanel = document.querySelector(".ytp-volume-panel");
-      if (ytpVolumePanel) {
-        this.syncVolumeObserver.observe(ytpVolumePanel, {
-          attributes: true,
-          subtree: true,
-        });
-      }
-    }
 
     // Global document click event: hide menu if click is outside.
     document.addEventListener(
@@ -769,27 +690,6 @@ class VideoHandler {
     this.videoManager.setSelectMenuValues(from, to);
   }
 
-  /**
-   * Wraps over syncVolume for slider syncing.
-   * @param {"translation"|"video"} fromType The initiator slider.
-   * @param {number} newVolume The new volume value.
-   */
-  syncVolumeWrapper(fromType, newVolume) {
-    const slider =
-      fromType === "translation"
-        ? this.uiManager.votOverlayView.videoVolumeSlider
-        : this.uiManager.votOverlayView.translationVolumeSlider;
-    const finalValue = syncVolume(
-      fromType === "translation" ? this.video : this.audioPlayer.player,
-      newVolume,
-      slider.value,
-      fromType === "translation" ? this.tempVolume : this.tempOriginalVolume,
-    );
-    slider.value = finalValue;
-    this.tempOriginalVolume =
-      fromType === "translation" ? finalValue : newVolume;
-    this.tempVolume = fromType === "translation" ? newVolume : finalValue;
-  }
 
   /**
    * Retrieves video data.
@@ -811,385 +711,46 @@ class VideoHandler {
    * Stops translation and resets UI elements.
    */
   stopTranslate() {
-    this.audioPlayer.player.removeVideoEvents();
-    this.audioPlayer.player.clear();
-    this.audioPlayer.player.src = undefined;
-    debug.log("audioPlayer after stopTranslate", this.audioPlayer);
+    this.translationHandler.stop();
     this.uiManager.votOverlayView.videoVolumeSlider.hidden = true;
     this.uiManager.votOverlayView.translationVolumeSlider.hidden = true;
-    this.uiManager.votOverlayView.downloadTranslationButton.hidden = true;
-    this.downloadTranslationUrl = null;
     this.longWaitingResCount = 0;
     this.transformBtn("none", localizationProvider.get("translateVideo"));
-    debug.log(`Volume on start: ${this.volumeOnStart}`);
     if (this.volumeOnStart) {
       this.setVideoVolume(this.volumeOnStart);
     }
-    clearInterval(this.streamPing);
-    clearTimeout(this.autoRetry);
-    this.hls?.destroy();
-    this.firstSyncVolume = true;
     this.actionsAbortController = new AbortController();
   }
 
   /**
-   * Updates the translation error message on the UI.
-   * @param {string|Error} errorMessage The error message.
-   */
-  async updateTranslationErrorMsg(errorMessage) {
-    const translationTake = localizationProvider.get("translationTake");
-    const lang = localizationProvider.lang;
-    this.longWaitingResCount =
-      errorMessage === localizationProvider.get("translationTakeAboutMinute")
-        ? this.longWaitingResCount + 1
-        : 0;
-    debug.log("longWaitingResCount", this.longWaitingResCount);
-    if (this.longWaitingResCount > minLongWaitingCount) {
-      errorMessage = new VOTLocalizedError("TranslationDelayed");
-    }
-    debug.log("updateTranslationErrorMsg message", errorMessage);
-    if (errorMessage?.name === "VOTLocalizedError") {
-      this.transformBtn("error", errorMessage.localizedMessage);
-    } else if (errorMessage instanceof Error) {
-      this.transformBtn("error", errorMessage?.message);
-    } else if (
-      this.data.translateAPIErrors &&
-      lang !== "ru" &&
-      !errorMessage?.includes(translationTake)
-    ) {
-      this.uiManager.votOverlayView.votButton.loading = true;
-      const translatedMessage = await translate(errorMessage, "ru", lang);
-      this.transformBtn("error", translatedMessage);
-    } else {
-      this.transformBtn("error", errorMessage);
-    }
-    if (
-      [
-        "Подготавливаем перевод",
-        "Видео передано в обработку",
-        "Ожидаем перевод видео",
-        "Загружаем переведенное аудио",
-      ].includes(errorMessage)
-    ) {
-      this.uiManager.votOverlayView.votButton.loading = true;
-    }
-  }
-
-  /**
-   * Called after translation is updated.
-   * @param {string} audioUrl The URL of the translation audio.
-   */
-  afterUpdateTranslation(audioUrl) {
-    const isSuccess =
-      this.uiManager.votOverlayView.votButton.container.dataset.status ===
-      "success";
-    this.uiManager.votOverlayView.videoVolumeSlider.hidden =
-      !this.data.showVideoSlider || !isSuccess;
-    this.uiManager.votOverlayView.translationVolumeSlider.hidden = !isSuccess;
-    if (this.data.enabledAutoVolume) {
-      this.uiManager.votOverlayView.videoVolumeSlider.value =
-        this.data.autoVolume;
-    }
-
-    if (!this.videoData.isStream) {
-      this.uiManager.votOverlayView.downloadTranslationButton.hidden = false;
-      this.downloadTranslationUrl = audioUrl;
-    }
-    debug.log(
-      "afterUpdateTranslation downloadTranslationUrl",
-      this.downloadTranslationUrl,
-    );
-    if (
-      this.data.sendNotifyOnComplete &&
-      this.longWaitingResCount &&
-      isSuccess
-    ) {
-      GM_notification({
-        text: localizationProvider
-          .get("VOTTranslationCompletedNotify")
-          .replace("{0}", window.location.hostname),
-        title: GM_info.script.name,
-        timeout: 5000,
-        silent: true,
-        tag: "VOTTranslationCompleted", // TM 5.0
-        onclick: () => {
-          window.focus();
-        },
-      });
-    }
-  }
-
-  /**
-   * Validates the audio URL by sending a request.
-   * @param {string} audioUrl The audio URL to validate.
-   * @returns {Promise<string>} The valid audio URL.
-   */
-  async validateAudioUrl(audioUrl) {
-    try {
-      const fetchOpts = this.isMultiMethodS3(audioUrl)
-        ? {
-            method: "HEAD",
-          }
-        : {
-            // some s3 don't support the same signature for different methods
-            headers: {
-              range: "bytes=0-0",
-            },
-          };
-      const response = await GM_fetch(audioUrl, fetchOpts);
-      debug.log("Test audio response", response);
-      if (response.ok) {
-        debug.log("Valid audioUrl", audioUrl);
-        return audioUrl;
-      }
-      debug.log("Yandex returned not valid audio, trying to fix...");
-      this.videoData.detectedLanguage = "auto";
-      const translateRes = await this.translationHandler.translateVideoImpl(
-        this.videoData,
-        this.videoData.detectedLanguage,
-        this.videoData.responseLanguage,
-        this.videoData.translationHelp,
-        !this.data.useAudioDownload,
-        this.actionsAbortController.signal,
-      );
-      this.setSelectMenuValues(
-        this.videoData.detectedLanguage,
-        this.videoData.responseLanguage,
-      );
-      audioUrl = translateRes.url;
-      debug.log("Fixed audio audioUrl", audioUrl);
-    } catch (err) {
-      debug.log("Test audio error:", err);
-    }
-    return audioUrl;
-  }
-
-  /**
-   * Proxifies the audio URL if needed.
-   * @param {string} audioUrl The original audio URL.
-   * @returns {string} The proxified audio URL.
-   */
-  proxifyAudio(audioUrl) {
-    if (
-      this.data.translateProxyEnabled === 2 &&
-      audioUrl.startsWith("https://vtrans.s3-private.mds.yandex.net/tts/prod/")
-    ) {
-      audioUrl = audioUrl.replace(
-        "https://vtrans.s3-private.mds.yandex.net/tts/prod/",
-        `https://${this.data.proxyWorkerHost}/video-translation/audio-proxy/`,
-      );
-      console.log(`[VOT] Audio proxied via ${audioUrl}`);
-    }
-    return audioUrl;
-  }
-
-  isMultiMethodS3(url) {
-    return (
-      url.startsWith("https://vtrans.s3-private.mds.yandex.net/tts/prod/") ||
-      url.startsWith(
-        `https://${this.data.proxyWorkerHost}/video-translation/audio-proxy/`,
-      )
-    );
-  }
-
-  /**
-   * Updates the translation audio source.
-   * @param {string} audioUrl The audio URL.
-   */
-  async updateTranslation(audioUrl) {
-    if (audioUrl !== this.audioPlayer.player.currentSrc) {
-      audioUrl = await this.validateAudioUrl(this.proxifyAudio(audioUrl));
-    }
-    if (this.audioPlayer.player.src !== audioUrl) {
-      this.audioPlayer.player.src = audioUrl;
-    }
-    try {
-      this.audioPlayer.init();
-    } catch (err) {
-      debug.log("this.audioPlayer.init() error", err);
-      this.transformBtn("error", err.message);
-    }
-    this.setupAudioSettings();
-    if (this.site.host === "twitter") {
-      document
-        .querySelector('button[data-testid="app-bar-back"][role="button"]')
-        .addEventListener("click", this.stopTranslation);
-    }
-    this.transformBtn("success", localizationProvider.get("disableTranslate"));
-    this.afterUpdateTranslation(audioUrl);
-  }
-
-  /**
-   * Translates the video/audio.
-   * @param {string} VIDEO_ID The video ID.
-   * @param {boolean} isStream Whether the video is a stream.
+   * Translates the video.
    * @param {string} requestLang Source language.
    * @param {string} responseLang Target language.
-   * @param {any} translationHelp Optional translation helper data.
    */
   async translateFunc(
-    VIDEO_ID,
-    isStream,
     requestLang,
     responseLang,
-    translationHelp,
   ) {
     console.log("[VOT] Video Data: ", this.videoData);
-    debug.log("Run videoValidator");
     this.videoValidator();
     this.uiManager.votOverlayView.votButton.loading = true;
     this.volumeOnStart = this.getVideoVolume();
-    const cacheKey = `${VIDEO_ID}_${requestLang}_${responseLang}_${this.data.useLivelyVoice}`;
-    const cachedEntry = this.cacheManager.getTranslation(cacheKey);
-    if (cachedEntry?.url) {
-      await this.updateTranslation(cachedEntry.url);
-      debug.log("[translateFunc] Cached translation was received");
-      return;
-    }
-    if (cachedEntry?.error) {
-      debug.log("Skip translation - previous attempt failed");
-      await this.updateTranslationErrorMsg(cachedEntry.error.data?.message);
-      return;
-    }
-    if (isStream) {
-      const translateRes = await this.translationHandler.translateStreamImpl(
-        this.videoData,
-        requestLang,
-        responseLang,
-        this.actionsAbortController.signal,
-      );
-      if (!translateRes) {
-        debug.log("Skip translation");
-        return;
+
+    try {
+      await this.translationHandler.translate(requestLang, responseLang);
+      this.transformBtn("success", localizationProvider.get("disableTranslate"));
+      this.uiManager.votOverlayView.videoVolumeSlider.hidden = !this.data.showVideoSlider;
+      this.uiManager.votOverlayView.translationVolumeSlider.hidden = false;
+      if (this.data.enabledAutoVolume) {
+        this.setVideoVolume((this.data.autoVolume / 100).toFixed(2));
       }
-      this.transformBtn(
-        "success",
-        localizationProvider.get("disableTranslate"),
-      );
-      try {
-        this.hls = initHls();
-        this.audioPlayer.init();
-      } catch (err) {
-        debug.log("this.audioPlayer.init() error", err);
-        this.transformBtn("error", err.message);
-      }
-      const streamURL = this.setHLSSource(translateRes.result.url);
-      if (this.site.host === "youtube") {
-        YoutubeHelper.videoSeek(this.video, 10);
-      }
-      this.setupAudioSettings();
-      if (!this.video.src && !this.video.currentSrc && !this.video.srcObject) {
-        return this.stopTranslation();
-      }
-      return this.afterUpdateTranslation(streamURL);
+    } catch (err) {
+      console.error("[VOT] Translation failed", err);
+      this.transformBtn("error", err.message);
     }
-    const translateRes = await this.translationHandler.translateVideoImpl(
-      this.videoData,
-      requestLang,
-      responseLang,
-      translationHelp,
-      !this.data.useAudioDownload,
-      this.actionsAbortController.signal,
-    );
-    debug.log("[translateRes]", translateRes);
-    if (!translateRes) {
-      debug.log("Skip translation");
-      return;
-    }
-    await this.updateTranslation(translateRes.url);
-    // Invalidate subtitles cache if there is no matching subtitle.
-    const cachedSubs = this.cacheManager.getSubtitles(cacheKey);
-    if (
-      !cachedSubs?.some(
-        (item) =>
-          item.source === "yandex" &&
-          item.translatedFromLanguage === this.videoData.detectedLanguage &&
-          item.language === this.videoData.responseLanguage,
-      )
-    ) {
-      this.cacheManager.deleteSubtitles(cacheKey);
-      this.subtitles = [];
-    }
-    this.cacheManager.setTranslation(cacheKey, {
-      videoId: VIDEO_ID,
-      from: requestLang,
-      to: responseLang,
-      url: this.downloadTranslationUrl,
-      useLivelyVoice: this.data?.useLivelyVoice,
-    });
   }
 
-  /**
-   * used for enable audio downloader on this hosts
-   */
-  isYouTubeHosts() {
-    return ["youtube", "invidious", "piped", "poketube", "ricktube"].includes(
-      this.site.host,
-    );
-  }
 
-  /**
-   * Sets up HLS streaming if needed.
-   * @param {string} streamURL The HLS stream URL.
-   */
-  setupHLS(streamURL) {
-    this.hls.on(Hls.Events.MEDIA_ATTACHED, function () {
-      debug.log("audio and hls.js are now bound together !");
-    });
-    this.hls.on(Hls.Events.MANIFEST_PARSED, function (data) {
-      debug.log(`manifest loaded, found ${data?.levels?.length} quality level`);
-    });
-    this.hls.loadSource(streamURL);
-    this.hls.attachMedia(this.audioPlayer.player.audio);
-    this.hls.on(Hls.Events.ERROR, function (data) {
-      if (data.fatal) {
-        switch (data.type) {
-          case Hls.ErrorTypes.MEDIA_ERROR:
-            console.log("fatal media error encountered, try to recover");
-            this.hls.recoverMediaError();
-            break;
-          case Hls.ErrorTypes.NETWORK_ERROR:
-            console.error("fatal network error encountered", data);
-            break;
-          default:
-            this.hls.destroy();
-            break;
-        }
-      }
-    });
-    debug.log(this.hls);
-  }
-
-  /**
-   * Sets the HLS source URL.
-   * @param {string} url The original URL.
-   * @returns {string} The final stream URL.
-   */
-  setHLSSource(url) {
-    const streamURL = `https://${this.data.m3u8ProxyHost}/?all=yes&origin=${encodeURIComponent("https://strm.yandex.ru")}&referer=${encodeURIComponent("https://strm.yandex.ru")}&url=${encodeURIComponent(url)}`;
-    if (this.hls) {
-      this.setupHLS(streamURL);
-    } else if (
-      this.audioPlayer.player.audio.canPlayType("application/vnd.apple.mpegurl")
-    ) {
-      this.audioPlayer.player.src = streamURL; // For Safari
-    } else {
-      throw new VOTLocalizedError("audioFormatNotSupported");
-    }
-    return streamURL;
-  }
-
-  /**
-   * Configures audio settings such as volume.
-   */
-  setupAudioSettings() {
-    if (typeof this.data.defaultVolume === "number") {
-      this.audioPlayer.player.volume = this.data.defaultVolume / 100;
-    }
-    if (this.data.enabledAutoVolume) {
-      this.setVideoVolume((this.data.autoVolume / 100).toFixed(2));
-    }
-  }
 
   /**
    * Stops translation and synchronizes volume.

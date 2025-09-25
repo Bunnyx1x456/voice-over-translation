@@ -57,6 +57,7 @@
     "postinstall": "patch-package"
   },
   "dependencies": {
+    "@browsermt/bergamot-translator": "^0.4.9",
     "@google/genai": "^1.19.0",
     "@vot.js/ext": "^2.4.12",
     "@vot.js/shared": "^2.4.12",

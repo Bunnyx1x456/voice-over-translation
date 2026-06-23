@@ -1,4 +1,4 @@
-# Закадровый перевод видео
+~~~# Закадровый перевод видео
 
 <!-- loaders links (website > github > store) -->
 
@@ -270,4 +270,4 @@ bun install
 
 ![example btn](https://github.com/ilyhalight/voice-over-translation/blob/master/img/example.png "btn")
 
-> Основано на проекте [sodapng/voice-over-translation](https://github.com/sodapng/voice-over-translation) (license MIT)
+> Основано на проекте [sodapng/voice-over-translation](https://github.com/sodapng/voice-over-translation) (license MIT)~~~

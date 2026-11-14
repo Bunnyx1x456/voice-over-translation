@@ -1,11 +1,35 @@
-# Voice Over Translation — UA & Global Free Open-Source Edition
+# [VOT] — Voice Over Translation (UA Free WebSpeech Edition)
 
-Форк проєкту ilyhalight/voice-over-translation із повною підтримкою **української мови (`uk`)** та 29+ мов світу, де **ASR/STT, машинний переклад (MT) та синтез мовлення (TTS) працюють на 100% безкоштовно** без платних ключів чи облікових записів.
+English version of README is available [here (README-EN.md)](./README-EN.md).
 
-### Ключові особливості цього форку
-- **Повна підтримка української мови (`uk`) за замовчуванням**: безкоштовний переклад і багатоголосе озвучування відео українською та ще 29 мовами світу (`uk`, `en`, `pl`, `de`, `fr`, `es`, `it`, `pt`, `cs`, `sk`, `bg`, `ro`, `hu`, `nl`, `sv`, `da`, `fi`, `no`, `el`, `tr`, `zh`, `ja`, `ko`, `ar`, `kk`, `hi`, `id`, `vi`, `th`, `he`).
-- **Мовна політика**: російська мова (`ru`) повністю вилучена зі списку цільових мов перекладу, озвучування та субтитрів (залишена лише як мова вхідного відео для перекладу з російськомовних відео українською або іншими мовами).
-- **Двосторонній безкоштовний TTS (Google Chrome <-> Microsoft Edge)**: використовує `Web Speech API` (`speechSynthesis`) та мережевий синтез Google Chrome TTS і Microsoft Edge Neural TTS (`OstapNeural`, `PolinaNeural` та ін.) із двостороннім fallback.
-- **Збереження кількох голосів (Multi-Voice) та Lip-Sync**: автоматичний розподіл реплік між чоловічими та жіночими голосами й синхронізація швидкості мовлення з таймкодами фраз у відео (`startMs`..`durationMs`) та Smart Auto-Volume Ducking.
-- **Повна сумісність із Google Chrome та Microsoft Edge (MV3 Extension + Userscript)**: у MS Edge використовується вбудований нейронний синтез (`uk-UA-OstapNeural`, `uk-UA-PolinaNeural`), а в Google Chrome працює фоновий сервіс-воркер (`background.js` + `declarativeNetRequest`) із паралельним синтезом через Google Translate RPC `batchexecute` (`jQ1olc`), `translate_tts` та Edge `api.msedgeservices.com`, синхронним розблокуванням `AudioContext` при кліку, захистом черги реплік (`cueBusy`) і резервним відтворенням `data:audio/mpeg;base64`.
-- **Природний темп мовлення Lip-Sync (`1.0x–1.25x`)**: м'яке підлаштування швидкості мовлення під реальний інтервал між фразами без зайвого прискорення.
+Вільне некомерційне розширення та юзерскрипт для автоматичного закадрового перекладу відео й субтитрів з повною підтримкою **української мови (`uk`)** та **29+ мов світу** у браузерах **Google Chrome** та **Microsoft Edge**.
+
+## Ключові особливості цього форку
+
+1. **Повна підтримка української мови (`uk`) як основної цільової мови**:
+   - Переклад та озвучування відео з будь-якої мови світу на українську та ще 29+ мов (`uk`, `en`, `pl`, `de`, `fr`, `es`, `it`, `pt`, `cs`, `sk`, `bg`, `ro`, `hu`, `nl`, `sv`, `da`, `fi`, `no`, `el`, `tr`, `zh`, `ja`, `ko`, `ar`, `kk`, `hi`, `id`, `vi`, `th`, `he`).
+   - Повністю вилучено `ru` зі списку цільових мов перекладу, озвучування та перекладених субтитрів (залишено лише як мову оригіналу відео для перекладу з неї на українську чи інші мови).
+2. **Повна сумісність із Google Chrome та Microsoft Edge (MV3 Extension + Userscript)**:
+   - У **Microsoft Edge** використовуються вбудовані нейронні голоси `uk-UA-OstapNeural` (чоловічий) та `uk-UA-PolinaNeural` (жіночий).
+   - У **Google Chrome** працює фоновий сервіс-воркер (`background.js` + `declarativeNetRequest`) із паралельним синтезом через офіційний RPC Google Translate `batchexecute` (`jQ1olc`), `translate_tts` та Edge `api.msedgeservices.com`, синхронним розблокуванням `AudioContext` при кліку, захистом черги реплік (`cueBusy`) та резервним відтворенням `data:audio/mpeg;base64`.
+3. **Багатоголосе озвучування (Multi-Voice Diarization)**:
+   - Автоматичний розподіл реплік між спікерами у діалогах із чергуванням чоловічих та жіночих голосів і тембрів.
+4. **Плавна синхронізація за таймкодами (Lip-Sync `1.0x–1.25x`) та Smart Ducking**:
+   - Кожна фраза озвучується у точний момент своєї появи у відео з природним темпом мовлення (`1.0x–1.25x`) без штучного поспіху, а гучність оригінальної доріжки автоматично приглушується під час мовлення диктора.
+5. **100% безкоштовний конвеєр перекладу без платних API-ключів**:
+   - Переклад субтитрів та інтерфейсних фраз виконується через безкоштовні клієнтські сервіси Microsoft Edge Translator, Google GTX, FOSWLY та MyMemory.
+
+## Встановлення
+
+### Варіант 1: Браузерне розширення (MV3 для Google Chrome та MS Edge — рекомендовано)
+1. Розпакуйте архів `vot-extension-chrome-edge-mv3.zip` (або відкрийте папку `dist-ext/vot-extension-chrome`).
+2. Відкрийте у браузері сторінку `chrome://extensions` (або `edge://extensions`).
+3. Увімкніть **Режим розробника (Developer mode)**.
+4. Натисніть **Завантажити розпаковане розширення (Load unpacked)** та оберіть папку розширення.
+
+### Варіант 2: Юзерскрипт (Tampermonkey / Violentmonkey)
+1. Встановіть розширення [Tampermonkey](https://www.tampermonkey.net/) або [Violentmonkey](https://violentmonkey.github.io/).
+2. Відкрийте або імпортуйте файл `dist/vot.user.js`.
+
+## Ліцензія
+MIT License (виключно для вільного некомерційного використання).
